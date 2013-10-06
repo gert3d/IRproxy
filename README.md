@@ -14,3 +14,4 @@ volDOWN = "L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.";       // 32 pulses
 mute = "S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L.";       // 32 pulses
 OnOff = "S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L.";
 DVD = "L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S.";
+
