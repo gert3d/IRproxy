@@ -49,6 +49,26 @@ String IRcode = "";      // String for the received IR code
 int decoded_signal;
 boolean toggleLED = true;     // Flag to determine if we need to turn LED on or off
 
+enum Pulse
+{
+  Init,
+  Long,
+  Short,
+};
+
+
+static const int ReceiveBufferLength = 256;
+static const char ReceiveBuffer[ReceiveBufferLength] = {};
+static int ReceiveBufferIndex = 0;
+
+void ClearCharArray(char charArray[], int length)
+{
+  for(int i = 0; i < length; i++)
+  {
+    charArray[i] = 0x00;
+  }
+}
+
 // For the Pioneer remote the following codes will be used:
 // vol+:           IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.  135 periods total
 // vol-:           IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.
@@ -58,13 +78,14 @@ boolean toggleLED = true;     // Flag to determine if we need to turn LED on or 
 // SAT:            IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L.
 //                         0 - common - 34                     35 - variable - 66      67     68 - same common part - 102     103 -  same variable part - 134
 //
-static const char volUP = "S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.";       // 32 pulses  (including separating pauses) 
-static const char volDOWN = "L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.";       // 32 pulses
-static const char mute = "S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L.";       // 32 pulses
-static const char common = "IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S.";    // 35 pulses (this is a common code for all of them: full code will be : common - function - common - function)
-static const char OnOff = "S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L.";
-static const char DVD = "L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S.";
+static const String volUP = "S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.";       // 32 pulses  (including separating pauses) 
+static const String volDOWN = "L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.";       // 32 pulses
+static const String mute = "S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L.";       // 32 pulses
+static const String common = "IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S.";    // 35 pulses (this is a common code for all of them: full code will be : common - function - common - function)
+static const String OnOff = "S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L.";
+static const String DVD = "L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S.";
 //String SAT = "S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L.";
+
 
 void setup() {
   Serial.begin(57600);
@@ -258,19 +279,19 @@ void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=454
        IRcode = "";
        break;
      case 1:
-       IRcode = common[] += volUP += common += volUP;
+       IRcode = common + volUP + common + volUP;
        break;
      case 2:
-       IRcode = common += volDOWN += common += volDOWN;
+       IRcode = common + volDOWN + common + volDOWN;
        break;
      case 3:
-       IRcode = common += mute += common += mute;
+       IRcode = common + mute + common + mute;
        break;
      case 4:
-       IRcode = common += OnOff += common += OnOff;
+       IRcode = common + OnOff + common + OnOff;
        break;
      case 5:
-       IRcode = common += DVD += common += DVD;
+       IRcode = common + DVD + common + DVD;
        break;
    }
    
@@ -290,19 +311,26 @@ void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=454
            toggleLED = true;
        } 
 // Delay depends on the char in string IRcode
-       if (IRcode[j] == '.') time = PAUSE;
-       else {
-         if (IRcode[j] == 'S') time = SHORT;
-         else {
-           if (IRcode[j] == 'L') time = LONG;
-           else {
-             if (IRcode[j] == 'I') time = INIT;
-             else {
-               if (IRcode[j] == 'G') time = GO;
-             }
-           }
-         }
+
+       switch(IRcode[j])
+       {
+         case '.':
+           time = PAUSE;
+           break;
+         case 'S':
+           time = SHORT;
+           break;
+         case 'L':
+           time = LONG;
+           break;
+         case 'I':
+           time = INIT;
+           break;
+         case 'G':
+           time = GO;
+           break;
        }
+
        if (digitalRead(PrintModePin) == LOW) {
           Serial.print(time);
           Serial.print(" ");
