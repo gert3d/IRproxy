@@ -11,7 +11,7 @@
  *  38KHz IR detector : pin1 = DIG2, pin2 = GND, pin3 = 5V
  *  Goal: decode Samsung remote, and send out Pioneer code's for the same functions. 
  *  Decoding works ok. Make sure not to waste time - like Serial.print() - in the timing sections, since that messes things up. 
- *  5 Keys on the Motorola remote / Samsung remote are identified, these are encoded and re-transmitted for Pioneer 
+ *  5 Keys on the Motorola remote / Samsung remote are identified, these are re-encoded and re-transmitted for Pioneer 
  * 
  *
  */ 
@@ -34,7 +34,7 @@ static const char MSG03[] = "\nReceiving a new code:";
 static const char MSG04[] = " We went high";
 static const char MSG05[] = " We went low again";
 static const char MSG06[] = " The IR code timed out at data-period: ";
-static const char MSG07[] = " The received code is: ";
+static const char MSG07[] = " The received code is: (ignoring the separating pulses when the detector is active, LOW)";
 static const char MSG17[] = "free RAM ";
 
 static const int IRdetectPin = 2;               // Sets the pin the receiver is on
@@ -118,21 +118,22 @@ void loop() {
   TCCR1A = 0x00;
   TCCR1B = 0x03;
   TIMSK1 = 0x00;
-  
-// microseconds                        500          600             1500
-//  ------------------------------|____________|---------------|_________________|-------------------------------------------- Detector value
-//  Start                         0            1               2                 3                                             SignalNumber
-//                                L            H               L                 H                                             DetectorLevel
-//                                0           500             1100              2600                                           TimerValue[SignalNumber]
-//                                    time           time            time                                  ->  timeout
+
+// this is how an example signal looks like:
+// microseconds                        4800                  600             550          1500           550
+//  ------------------------------|____________________|---------------|___________|-----------------|_________|----- //  ---------------------- Detector value
+//  Start                         0                    1               2           3                 4         5                                 SignalNumber
+//                                L                    H               L           H                 L         H                                 DetectorLevel
+//                                0                  4800             5400        5950             7450       8000                               TimerValue[SignalNumber]
+//                                      START                SHORT          PAUSE         LONG          PAUSE                                     ->  timeout
 
   
 
   while(digitalRead(IRdetectPin) == HIGH) {}                  // Initial waiting loop - do nothing until IR receiver goes low (indicating signal detected) a 38KHz puls train has begun, so let's decode it
-                                               // YES, signal received, prepare to receive it
+                                              // YES, at this point a signal is being received, prepare to decode it
   TCNT1 = 0;                                  // Resets the TCNT1 counter to 0   
-  time = 0;                                    // record start-time of the first 38KHz pulse 
-  DetectorLevel = 'L';                         // L indicates that IR detector went LOW
+  time = 0;                                   // record start-time of the first 38KHz pulse 
+  DetectorLevel = 'L';                        // L indicates that IR detector went LOW
 
 
   ReceiveIR();
@@ -143,13 +144,12 @@ void loop() {
       Serial.print(MSG06);
       Serial.println(SignalNumber-1);  
       Serial.println(MSG07);            // The received code is:
-//      Serial.print(IRcode[17]);Serial.print(IRcode[18]);Serial.print(IRcode[19]);Serial.print(IRcode[20]);Serial.print(IRcode[21]);Serial.print(IRcode[22]);Serial.print(IRcode[23]);Serial.print(IRcode[24]);Serial.print(IRcode[25]);Serial.print(IRcode[26]);Serial.print(IRcode[27]);Serial.print(IRcode[28]);Serial.println(IRcode[29]);
       Serial.print(IRcode.substring(0,17));
       Serial.print(" ");
       Serial.print(IRcode.substring(17,30));
       Serial.print(" ");
       Serial.println(IRcode.substring(30,SignalNumber-1));      
-      Serial.println(IRcode);
+//      Serial.println(IRcode);
     }
     
     DecodeIR();
