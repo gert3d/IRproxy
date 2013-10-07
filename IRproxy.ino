@@ -11,9 +11,8 @@
  *  38KHz IR detector : pin1 = DIG2, pin2 = GND, pin3 = 5V
  *  Goal: decode Samsung remote, and send out Pioneer code's for the same functions. 
  *  Decoding works ok. Make sure not to waste time - like Serial.print() - in the timing sections, since that messes things up. 
- *  5 Keys on the Motorola remote are identified, these now need to be encoded and transmitted for Pioneer 
+ *  5 Keys on the Motorola remote / Samsung remote are identified, these are encoded and re-transmitted for Pioneer 
  * 
- * welll ...
  *
  */ 
 
@@ -21,11 +20,12 @@
 #include <avr/io.h>
 
 // microsecod delays for the Pioneer IR signals
-#define PAUSE  576         // micro-seconds duration
-#define SHORT  498         // micro-seconds duration
-#define LONG  1547         // micro-seconds duration
-#define INIT  8577         // micro-seconds duration
-#define GO  4217           // micro-seconds duration
+#define PAUSE  576         // micro-seconds duration (.), active 38KHz pulse
+#define SHORT  498         // micro-seconds duration (S), as a period between PAUSEs
+#define LONG  1547         // micro-seconds duration (L), as a period between PAUSEs
+#define INIT  8577         // micro-seconds duration (I), as a period between PAUSEs
+#define GO  4217           // micro-seconds duration (G), active 38KHz pulse
+#define CONNECT 27000      // micro-seconds duration (C), active 38KHz pulse
 
 
 //static const char MSG01[] = "Analyze IR Remote";
@@ -49,44 +49,25 @@ int timeout = 0;              // Times out if no signal detected for a long peri
 boolean timedOut = false;
 String IRcode = "";      // String for the received IR code
 int decoded_signal;
-boolean toggleLED = true;     // Flag to determine if we need to turn LED on or off
-
-enum Pulse
-{
-  Init,
-  Long,
-  Short,
-};
-
-
-static const int ReceiveBufferLength = 256;
-static const char ReceiveBuffer[ReceiveBufferLength] = {};
-static int ReceiveBufferIndex = 0;
-
-void ClearCharArray(char charArray[], int length)
-{
-  for(int i = 0; i < length; i++)
-  {
-    charArray[i] = 0x00;
-  }
-}
 
 // For the Pioneer remote the following codes will be used:
-// vol+:           IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.  135 periods total
-// vol-:           IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.
-// volx:           IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L.
-// OnOff:          IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L.
-// DVD:            IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S.
-// SAT:            IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L. C IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S. S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L.
-//                         0 - common - 34                     35 - variable - 66      67     68 - same common part - 102     103 -  same variable part - 134
+// vol+:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C  135 periods total
+// vol-:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L .C
+// volx:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C
+// OnOff:          IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L .C
+// DVD:            IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S .C
+// SAT:            IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L .C
+//                 0/1      2 - common - 33                     34 - variable - 65      66 68   70 - same common part - 101     102 -  same variable part - 133 134/135
 //
-static const String volUP = "S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.";       // 32 pulses  (including separating pauses) 
-static const String volDOWN = "L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L.";       // 32 pulses
-static const String mute = "S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L.";       // 32 pulses
-static const String common = "IG.L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S.";    // 35 pulses (this is a common code for all of them: full code will be : common - function - common - function)
-static const String OnOff = "S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L.";
-static const String DVD = "L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S.";
-//String SAT = "S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L.";
+// build this up like this:
+ static const String common = "LSLSSLSLSLSLLSLS";       // 32 pulses, each code-bit is preceeded by a pause (this is a common code for all of them: full code will be : IG- common - function - C - IG - common - function - C)
+  static const String volUP = "SLSLSSSSLSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause 
+static const String volDOWN = "LLSLSSSSSSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause
+   static const String mute = "SLSSLSSSLSLLSLLL";       // 32 pulses, each code-bit is preceeded by a pause
+  static const String OnOff = "SSLLLSSSLLSSSLLL";       // 32 pulses, each code-bit is followed by a pause 
+    static const String DVD = "LSLSSSSLSLSLLLLS";       // 32 pulses, each code-bit is followed by a pause 
+    static const String SAT = "SSSSLSSSLLLLSLLL";       // 32 pulses, each code-bit is followed by a pause 
+    
 
 
 void setup() {
@@ -107,7 +88,7 @@ void setup() {
   pinMode(LEDpin, OUTPUT);
   digitalWrite(LEDpin, LOW);
   pinMode(PrintModePin, INPUT);
-  digitalWrite(PrintModePin, HIGH);     // prevents SerialPrint() statements to be carried out in the sketch, unless there is a resistor from Dig10 to GND.
+  digitalWrite(PrintModePin, HIGH);     // prevents SerialPrint() statements to be carried out in the sketch, unless Dig10 is connected to GND.
   
   // for the broadcast of IR code's:
   pinMode(IRsendPin, OUTPUT);    
@@ -123,26 +104,8 @@ void setup() {
   // and for 40KHz: 16M/80K -1 = 199
   // OCRA2A = 140 for 56KHz operation
   OCR2A = 209; 
-
-// periods in microseconds
-// Init (I): -8577
-// GO (G): +4217
-// Pause (.): -576
-// Long (L): +1547
-// Short (S): +498
-// Connect (C): 27130 (apart invoegen
-
-//common = String("IG.H.S.H.S.S.H.S.H.S.H.S.H.H.S.H.S.");
-//volUP = String("S.H.S.H.S.S.S.S.H.S.H.S.H.H.H.H.");
-//volDOWN = String("H.H.S.H.S.S.S.S.S.S.H.S.H.H.H.H.");
-//mute = String("S.H.S.S.H.S.S.S.H.S.H.H.S.H.H.H.");
-//OnOff = String("S.S.H.H.H.S.S.S.H.H.S.S.S.H.H.H.");
-//DVD = String("H.S.H.S.S.S.S.H.S.H.S.H.H.H.H.S.");
-//SAT = String("S.S.S.S.H.S.S.S.H.H.H.H.S.H.H.H.");
-
-//common[] = (8577, 4217,576, 1547, 576);
-//
 }
+
 
 void loop() {
 //  Serial.flush();                 // Reset counters and flags
@@ -192,24 +155,17 @@ void loop() {
     DecodeIR();
     if (digitalRead(PrintModePin) == LOW) Serial.println(decoded_signal);
     
-    toggleLED = true;
     SendIR();   
    
-    if (digitalRead(PrintModePin) == LOW) { 
+//    if (digitalRead(PrintModePin) == LOW) { 
       Serial.println();
       Serial.print(MSG17);                      // "free RAM ";
       Serial.println(freeRam());   
-    }
+//    }
   }
 }
 
-// example vol+
-// 0         0         0         0   33
-// XLLLSSSSSLLLSSSSSLLLSSSSSSSSLLLLLX
-//                  HHHSSSSSSSSHH
-//	            17 ------- 29
-
-// -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------- Subroutines ----------------------------------------------------------------------------------------------------------------------------
 
 int freeRam () {                                   // see: http://playground.arduino.cc/Code/AvailableMemory
   extern int __heap_start, *__brkval; 
@@ -254,8 +210,8 @@ void ReceiveIR() {
 }
 
 
-void DecodeIR() {
-     if (IRcode.substring(17,30) == "LLLSSSSSSSSLL") decoded_signal = 1;                       // Motorola remote sends "Volume UP"
+void DecodeIR() {                                                                              // this routine looks into the received pulse-code-string and constructs the pulse-code-string to be sent out again
+     if (IRcode.substring(17,30) == "LLLSSSSSSSSLL") decoded_signal = 1;                       // Motorola/Samsung remote sends "Volume UP"
    else {
      if (IRcode.substring(17,30) == "LLSLSSSSSSLSL") decoded_signal = 2;                       // "Volume DOWN"
      else {
@@ -269,78 +225,68 @@ void DecodeIR() {
        }
      }
    }
-}
-
-
-
-
-void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=45499.0  
-
    switch (decoded_signal) {    // first construct the IRcode to send out
      case 0:
        IRcode = "";
        break;
      case 1:
-       IRcode = common + volUP + common + volUP;
+       IRcode = "G" + common + volUP + "CG" + common + volUP + "C";
        break;
      case 2:
-       IRcode = common + volDOWN + common + volDOWN;
+       IRcode = "G" + common + volDOWN + "CG" + common + volDOWN + "C";
        break;
      case 3:
-       IRcode = common + mute + common + mute;
+       IRcode = "G" + common + mute + "CG" + common + mute + "C";
        break;
      case 4:
-       IRcode = common + OnOff + common + OnOff;
+       IRcode = "G" + common + OnOff + "CG" + common + OnOff + "C";
        break;
      case 5:
-       IRcode = common + DVD + common + DVD;
+       IRcode = "G" + common + DVD + "CG" + common + DVD + "C";
        break;
    }
    
-   if (digitalRead(PrintModePin) == LOW) Serial.println(IRcode);
-  
-   digitalWrite(LEDpin, HIGH);                        // next start sending the code
-   for (int j = 0 ; j < IRcode.length() ; j++) {
-// Turn the LED on or off (first time through LED is turned on, since toggleLED is initialised as TRUE)
-       if(toggleLED) {
-// Connect pin to signal, this turns on the LED (in a PWM mode, see value OCR2A)
-           TCCR2A |=  _BV(COM2A0);         // Fast PWM Mode, see: http://arduino.cc/en/Tutorial/SecretsOfArduinoPWM
-           toggleLED = false;
-       } 
+   if (digitalRead(PrintModePin) == LOW) {
+     Serial.print("IRcode = ");
+     Serial.println(IRcode);
+     Serial.print("Length IRcode = ");
+     Serial.println(IRcode.length());
+   }
+}
+
+
+
+void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=45499.0  
+
+   digitalWrite(LEDpin, HIGH);                        // turn on the indicator LED 
+   timeout = IRcode.length();
+
+   for (int j = 0 ; j < timeout ; j++) {
+
+     if (IRcode[j] == 'S') time = SHORT;
        else {
-           TCCR2A &= (0xFF - _BV(COM2A0)); // disconnect pin from signal
-           digitalWrite(LEDpin,LOW); // turn pin low in case it's still high
-           toggleLED = true;
-       } 
-// Delay depends on the char in string IRcode
-
-       switch(IRcode[j])
-       {
-         case '.':
-           time = PAUSE;
-           break;
-         case 'S':
-           time = SHORT;
-           break;
-         case 'L':
-           time = LONG;
-           break;
-         case 'I':
-           time = INIT;
-           break;
-         case 'G':
-           time = GO;
-           break;
+         if (IRcode[j] == 'L') time = LONG;
+         else {
+           if (IRcode[j] == 'G') time = GO;
+           else {
+             if (IRcode[j] == 'C') time = CONNECT;
+           }
+         }
        }
-
+       
+// Connect pin to signal, this turns on the IR LED (in a PWM mode, see value OCR2A)
+       TCCR2A |=  _BV(COM2A0);         // Fast PWM Mode, see: http://arduino.cc/en/Tutorial/SecretsOfArduinoPWM
+// Duration depends of separating code-bit, only in case of GO, it needs to be INIT long, otherwise use PAUSE (see Pioneer IR code)
+       if (time == GO) delayMicroseconds(INIT);
+       else delayMicroseconds(PAUSE);
+       
+       TCCR2A &= (0xFF - _BV(COM2A0)); // disconnect pin from signal
+       delayMicroseconds(time);        // duration of the coding bit
        if (digitalRead(PrintModePin) == LOW) {
-          Serial.print(time);
-          Serial.print(" ");
+         Serial.print(time);
+         Serial.print(" ");
        }
-       delayMicroseconds(time); 
-    }
-// Turn off the signal after we end the loop
-    TCCR2A &= (0xFF - _BV(COM2A0)); // disconnect pin from signal
-    digitalWrite(11,LOW); // turn pin low in case it's high
-    toggleLED = true;  
+   }
+   digitalWrite(IRsendPin,LOW);              // turn pin low in case it's still high
+   digitalWrite(LEDpin, LOW);                // turn off indicator LED
 }
