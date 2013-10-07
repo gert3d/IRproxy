@@ -12,6 +12,8 @@
  *  Goal: decode Samsung remote, and send out Pioneer code's for the same functions. 
  *  Decoding works ok. Make sure not to waste time - like Serial.print() - in the timing sections, since that messes things up. 
  *  5 Keys on the Motorola remote are identified, these now need to be encoded and transmitted for Pioneer 
+ * 
+ * welll ...
  *
  */ 
 
