@@ -49,6 +49,7 @@ int timeout = 0;              // Times out if no signal detected for a long peri
 boolean timedOut = false;
 String IRcode = "";      // String for the received IR code
 int decoded_signal;
+boolean toggleChannel = true;
 
 // For the Pioneer remote the following codes will be used:
 // vol+:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C  135 periods total
@@ -64,7 +65,7 @@ int decoded_signal;
   static const String volUP = "SLSLSSSSLSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause 
 static const String volDOWN = "LLSLSSSSSSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause
    static const String mute = "SLSSLSSSLSLLSLLL";       // 32 pulses, each code-bit is preceeded by a pause
-  static const String OnOff = "SSLLLSSSLLSSSLLL";       // 32 pulses, each code-bit is followed by a pause 
+//  static const String OnOff = "SSLLLSSSLLSSSLLL";       // 32 pulses, each code-bit is followed by a pause 
     static const String DVD = "LSLSSSSLSLSLLLLS";       // 32 pulses, each code-bit is followed by a pause 
     static const String SAT = "SSSSLSSSLLLLSLLL";       // 32 pulses, each code-bit is followed by a pause 
     
@@ -217,11 +218,20 @@ void DecodeIR() {                                                               
      else {
        if (IRcode.substring(17,30) == "LLLLSSSSSSSSL") decoded_signal = 3;                      // "MUTE"
        else {
-         if (IRcode.substring(17,30) == "SLSSSSSSLSLLL") decoded_signal = 4;                    // "ON / OFF"
-         else {
-           if (IRcode.substring(17,30) == "SLSSLSSSLSLLS") decoded_signal = 5;                  // "Return (use for signal Input select: SAT or DVD)"
+//         if (IRcode.substring(17,30) == "SLSSSSSSLSLLL") decoded_signal = 4;                  // "ON / OFF" : not used since Samsung TV AND Pioneer receiver will turm off
+//         else {
+           if (IRcode.substring(17,30) == "SLSSLSSSLSLLS") {                                    // "return" key code on universal remote, used to toggle between SAT or DVD input on Pioneer
+             if (toggleChannel) {
+               decoded_signal = 5 ; 
+               toggleChannel = false;
+             } 
+             else {
+               decoded_signal = 6 ; 
+               toggleChannel = true;
+             }
+           }  
            else decoded_signal = 0;                                                            // "no corresponding signal"
-         }
+//         }
        }
      }
    }
@@ -238,12 +248,14 @@ void DecodeIR() {                                                               
      case 3:
        IRcode = "G" + common + mute + "CG" + common + mute + "C";
        break;
-     case 4:
-       IRcode = "G" + common + OnOff + "CG" + common + OnOff + "C";
-       break;
+//     case 4:
+//       IRcode = "G" + common + OnOff + "CG" + common + OnOff + "C";
+//       break;
      case 5:
        IRcode = "G" + common + DVD + "CG" + common + DVD + "C";
        break;
+     case 6:
+       IRcode = "G" + common + SAT + "CG" + common + SAT + "C";        
    }
    
    if (digitalRead(PrintModePin) == LOW) {
