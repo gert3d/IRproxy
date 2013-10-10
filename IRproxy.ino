@@ -1,5 +1,5 @@
 /*
- *  File....... IRanalyzer.pde 
+ *  Original File....... IRanalyzer.pde 
  *  Purpose.... Records up to 192 signal changes and prints in format for use with TransmitIRSignal 
  *  Author..... Walter Anderson, modified by Tom Lauwers
  *  E-mail..... wandrson@walteranderson.us/tlauwers@birdbraintechnologies.com
@@ -9,17 +9,16 @@
  * 
  *  Modified by Gert de Vries (specific goal) sept 2013
  *  38KHz IR detector : pin1 = DIG2, pin2 = GND, pin3 = 5V
- *  Goal: decode Samsung remote, and send out Pioneer code's for the same functions. 
- *  Decoding works ok. Make sure not to waste time - like Serial.print() - in the timing sections, since that messes things up. 
- *  5 Keys on the Motorola remote / Samsung remote are identified, these are re-encoded and re-transmitted for Pioneer 
- * 
- *
+ *  Purpose: decode Samsung TV remote, and send out Pioneer amplifier code's for the same functions. 
+ *  Sections: Decoding encoding and re-transmission routine's.
+ *  Selection has been made for 4 Keys on the (Motorola remote / Samsung remote / universal remote) to be decoded, re-encoded and re-transmitted for Pioneer receiver:
+ *  vol-up ; vol-down ; mute ; 'return'-key (only on universal remote: -> toggle between SAT / DVD input on Pioneer receiver)
  */ 
 
 #include <avr/interrupt.h>
 #include <avr/io.h>
 
-// microsecod delays for the Pioneer IR signals
+// required microsecod delays for the Pioneer IR signals
 #define PAUSE  576         // micro-seconds duration (.), active 38KHz pulse
 #define SHORT  498         // micro-seconds duration (S), as a period between PAUSEs
 #define LONG  1547         // micro-seconds duration (L), as a period between PAUSEs
@@ -29,32 +28,33 @@
 
 
 //static const char MSG01[] = "Analyze IR Remote";
-static const char MSG02[] = "Waiting...for IR input";
-static const char MSG03[] = "\nReceiving a new code:";
-static const char MSG04[] = " We went high";
-static const char MSG05[] = " We went low again";
-static const char MSG06[] = " The IR code timed out at data-period: ";
-static const char MSG07[] = " The received code is: (ignoring the separating pulses when the detector is active, LOW)";
-static const char MSG17[] = "free RAM ";
+//static const char MSG02[] = " Waiting...for IR input";
+static const char MSG03[] = "\n Receiving IR code with length = ";
+//static const char MSG04[] = " We went high";
+//static const char MSG05[] = " We went low again";
+//static const char MSG06[] = " The IR code timed out at data-period: ";
+static const char MSG07[] = "  and Long / Short silent periods between separating PAUSE pulses when the detector is active, LOW): ";
+static const char MSG08[] = " The re-transmitted Pioneer code is:";
+static const char MSG17[] = " free RAM ";
 
-static const int IRdetectPin = 2;               // Sets the pin the receiver is on
-static const int LEDpin = 13;              // indicate signal reception
-static const int IRsendPin = 11;           // Sets the pin the IR LED is on
+static const int IRdetectPin = 2;           // Sets the pin the receiver is on
+static const int LEDpin = 13;               // indicate signal reception
+static const int IRsendPin = 11;            // Sets the pin the IR LED is on
 static const int PrintModePin = 10;         // set HIGH using software, but when set LOW (jumper), the SerialPrint() statements in the sketch will NOT be carried out
 
-char DetectorLevel;            // Keeps track of detector mode (LOW = 38KHz pulse = pause, HIGH = no 38KHz pulse = data or timeout)
-int SignalNumber = 0;               // number all the level changes of the IR pulses (this is 1 more than the number of periods recorded)
-unsigned short time;                     // period in u-seconds of the pulses and pauses
-int timeout = 0;              // Times out if no signal detected for a long period
-boolean timedOut = false;
-String IRcode = "";      // String for the received IR code
-int decoded_signal;
-boolean toggleChannel = true;
+char DetectorLevel;                         // Keeps track of detector mode (LOW = 38KHz pulse = pause, HIGH = no 38KHz pulse = data or timeout)
+int SignalNumber = 0;                       // number all the level changes of the IR pulses (this is 1 more than the number of periods recorded)
+unsigned short time;                        // period in u-seconds of the pulses and pauses
+int timeout = 0;                            // Times out if no signal detected for a long period
+boolean timedOut = false;                   // 
+String IRcode = "";                         // String for the received IR code
+int decoded_signal;                         // number for the identified IR code
+boolean toggleChannel = true;               // used to choose between SAT / DVD input on Pioneer receiver
 
 // For the Pioneer remote the following codes will be used:
 // vol+:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.L.S.S.S.S.L.S.L.S.L.L.L.L .C  135 periods total
 // vol-:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.L.S.L.S.S.S.S.S.S.L.S.L.L.L.L .C
-// volx:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C
+// mute:           IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.L.S.S.L.S.S.S.L.S.L.L.S.L.L.L .C
 // OnOff:          IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.L.L.L.S.S.S.L.L.S.S.S.L.L.L .C
 // DVD:            IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .L.S.L.S.S.S.S.L.S.L.S.L.L.L.L.S .C
 // SAT:            IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L .C IG .L.S.L.S.S.L.S.L.S.L.S.L.L.S.L.S .S.S.S.S.L.S.S.S.L.L.L.L.S.L.L.L .C
@@ -65,19 +65,18 @@ boolean toggleChannel = true;
   static const String volUP = "SLSLSSSSLSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause 
 static const String volDOWN = "LLSLSSSSSSLSLLLL";       // 32 pulses, each code-bit is preceeded by a pause
    static const String mute = "SLSSLSSSLSLLSLLL";       // 32 pulses, each code-bit is preceeded by a pause
-//  static const String OnOff = "SSLLLSSSLLSSSLLL";       // 32 pulses, each code-bit is followed by a pause 
+//  static const String OnOff = "SSLLLSSSLLSSSLLL";       // 32 pulses, each code-bit is followed by a pause , not used
     static const String DVD = "LSLSSSSLSLSLLLLS";       // 32 pulses, each code-bit is followed by a pause 
     static const String SAT = "SSSSLSSSLLLLSLLL";       // 32 pulses, each code-bit is followed by a pause 
-    
 
 
 void setup() {
   Serial.begin(57600);
-  Serial.println();
-  Serial.println(F("Analyze IR Remote"));                    // "Analyze IR Remote";
+//  Serial.println();
+//  Serial.println(F("Analyze IR Remote"));                    // "Analyze IR Remote";
   Serial.print(MSG17);                      // "free RAM ";
-  Serial.println(freeRam()); 
-  Serial.println(MSG02);                    //  "Waiting...for IR input";
+  Serial.println(freeRam());                // free RAM routine is used to keep track of memory usage: useful in this sketch of heavy string usage.
+//  Serial.println(MSG02);                    //  "Waiting...for IR input";
   TCCR1A = 0x00;          // COM1A1=0, COM1A0=0 => Disconnect Pin OC1 from Timer/Counter 1 -- PWM11=0,PWM10=0 => PWM Operation disabled
   // ICNC1=0 => Capture Noise Canceler disabled -- ICES1=0 => Input Capture Edge Select (not used) -- CTC1=0 => Clear Timer/Counter 1 on Compare/Match
   // CS12=0 CS11=1 CS10=1 => Set prescaler to clock/64
@@ -85,14 +84,14 @@ void setup() {
   // ICIE1=0 => Timer/Counter 1, Input Capture Interrupt Enable -- OCIE1A=0 => Output Compare A Match Interrupt Enable -- OCIE1B=0 => Output Compare B Match Interrupt Enable
   // TOIE1=0 => Timer 1 Overflow Interrupt Enable
   TIMSK1 = 0x00;          
+
   pinMode(IRdetectPin, INPUT);
   pinMode(LEDpin, OUTPUT);
   digitalWrite(LEDpin, LOW);
   pinMode(PrintModePin, INPUT);
   digitalWrite(PrintModePin, HIGH);     // prevents SerialPrint() statements to be carried out in the sketch, unless Dig10 is connected to GND.
   
-  // for the broadcast of IR code's:
-  pinMode(IRsendPin, OUTPUT);    
+  pinMode(IRsendPin, OUTPUT);              // for the transmission of IR code's:
   // PWM Magic - we directly set atmega registers to 50% duty cycle,
   // variable frequency mode. Currently set to 38 KHz.
   // Thanks http://arduino.cc/en/Tutorial/SecretsOfArduinoPWM .
@@ -109,54 +108,59 @@ void setup() {
 
 
 void loop() {
-//  Serial.flush();                 // Reset counters and flags
   IRcode = "";
   SignalNumber = 1;      
   timeout = 0;
   timedOut = false;
-  digitalWrite(LEDpin, LOW);
+  digitalWrite(LEDpin, LOW);           // switch off indicator LED after IR transmission
   
   TCCR1A = 0x00;
   TCCR1B = 0x03;
   TIMSK1 = 0x00;
 
-// this is how an example signal looks like:
-// microseconds                        4800                  600             550          1500           550
-//  ------------------------------|____________________|---------------|___________|-----------------|_________|----- //  ---------------------- Detector value
-//  Start                         0                    1               2           3                 4         5                                 SignalNumber
-//                                L                    H               L           H                 L         H                                 DetectorLevel
-//                                0                  4800             5400        5950             7450       8000                               TimerValue[SignalNumber]
-//                                      START                SHORT          PAUSE         LONG          PAUSE                                     ->  timeout
+// this is an example how an IR signal would look like that needs to be analysed:
+// microseconds                        8500                  4200            550          500        550         1500             550
+//  ------------------------------|____________________|---------------|____________|-----------|___________|-----------------|_________|----- //  ---------------------- Detector value
+//  Start                         0                    1               2           3            4           5                 6         7                          SignalNumber
+//                                L                    H               L           H            L           H                 L         H                          DetectorLevel
+//                                0                  8500            12700       13250        13750       14300             15800     16350                        TimerValue[SignalNumber]
+//                                      INIT                GO             PAUSE         SHORT       PAUSE         LONG           PAUSE                            ->  timeout
 
   
 
   while(digitalRead(IRdetectPin) == HIGH) {}                  // Initial waiting loop - do nothing until IR receiver goes low (indicating signal detected) a 38KHz puls train has begun, so let's decode it
-                                              // YES, at this point a signal is being received, prepare to decode it
-  TCNT1 = 0;                                  // Resets the TCNT1 counter to 0   
-  time = 0;                                   // record start-time of the first 38KHz pulse 
-  DetectorLevel = 'L';                        // L indicates that IR detector went LOW
+                                                              // YES, at this point a signal is being received, prepare to decode it
+  TCNT1 = 0;                                                  // Resets the TCNT1 counter to 0   
+  time = 0;                                                   // record start-time of the first 38KHz pulse 
+  DetectorLevel = 'L';                                        // L indicates that IR detector went LOW
 
-
-  ReceiveIR();
+  ReceiveIR();                                                // collect the IR code in the string IRcode, with length sugnalNumber
   
-  if (SignalNumber >= 4) {          // avoid false signals
-    if (digitalRead(PrintModePin) == LOW) {
-      Serial.println(MSG03);
-      Serial.print(MSG06);
-      Serial.println(SignalNumber-1);  
-      Serial.println(MSG07);            // The received code is:
+  if (SignalNumber >= 4) {                                    // avoid false signals
+    if (digitalRead(PrintModePin) == LOW) {                   // use serial print commands only if PrintModePin is connected to GND
+      Serial.print(MSG03);
+//      Serial.print(MSG06);
+      Serial.print(SignalNumber-1);  
+      Serial.println(MSG07);                                 // ": (Long and Short signals are silent periods between separating PAUSE pulses when the detector is active, LOW)"
       Serial.print(IRcode.substring(0,17));
       Serial.print(" ");
-      Serial.print(IRcode.substring(17,30));
+      Serial.print(IRcode.substring(17,30));                   // This is the part of the code that determines the function
       Serial.print(" ");
       Serial.println(IRcode.substring(30,SignalNumber-1));      
 //      Serial.println(IRcode);
     }
     
-    DecodeIR();
-    if (digitalRead(PrintModePin) == LOW) Serial.println(decoded_signal);
+    DecodeIR(); 
+//    if (digitalRead(PrintModePin) == LOW) Serial.println(decoded_signal);
     
-    SendIR();   
+    SendIR(); 
+  
+     if (digitalRead(PrintModePin) == LOW) {
+     Serial.println(MSG08);
+     Serial.println(IRcode);
+//     Serial.print("Length IRcode = ");
+//     Serial.println(IRcode.length());
+     }  
    
 //    if (digitalRead(PrintModePin) == LOW) { 
       Serial.println();
@@ -175,37 +179,35 @@ int freeRam () {                                   // see: http://playground.ard
 }
 
 
-
-
 void ReceiveIR() {
-  while (!timedOut) {                   // This is the loop where the pulses (pause) and data-periods are evaluated, get out after a timeout
+  while (!timedOut && SignalNumber <=150) {                       // This is the loop where the pulses (pause) and data-periods are evaluated, get out after a timeout or if IR code becomes too long
                                                                  
-    if (DetectorLevel == 'L') {              // First test whether we are currently in a 38KHz pulse (since then our last recorded DetectorLevel = HIGH)
-      while(digitalRead(IRdetectPin) == LOW) {}                // Yes, so wait until the 38KHz pulse ends (if NO see: else - loop)
-        time = TCNT1;                          // mark the start-time of the IR detector change
-        DetectorLevel = 'H';                   // IR detector went HIGH, so a data-period now starts
+    if (DetectorLevel == 'L') {                                   // First test whether we are currently in a 38KHz pulse (since then our last recorded DetectorLevel = HIGH)
+      while(digitalRead(IRdetectPin) == LOW) {}                   // Yes, so wait until the 38KHz pulse ends (if NO see: else - loop)
+        time = TCNT1;                                             // mark the start-time of the IR detector change
+        DetectorLevel = 'H';                                      // IR detector went HIGH, so a data-period now starts
     }      
                                               
-    else {                                         // If the signal went HIGH, (DetectorLevel[SignalNumber] == 'L') wait until the pin goes low or until it times out check for a timeout
+    else {                                                        // If the signal went HIGH, (DetectorLevel[SignalNumber] == 'L') wait until the pin goes low or until it times out check for a timeout
       timeout = 0;
-      while(digitalRead(IRdetectPin) == HIGH && !timedOut) {          // We only need to check for timeout if the pin is high because receivers are high when not receiving signal        
-        timeout++;                                    // we use the waiting period for a next low (new pulse) to determine whether this was the last pulse
+      while(digitalRead(IRdetectPin) == HIGH && !timedOut) {      // We only need to check for timeout if the pin is high because receivers are high when not receiving signal        
+        timeout++;                                                // we use the waiting period for a next low (new pulse) to determine whether this was the last pulse
         delayMicroseconds(2);                        
-        if(timeout > 20000) {                        // If the IR DetectorLevel is inactive for more than 4 x 2000 useconds (8 msec) then end of the bit stream is reached: 
+        if(timeout > 20000) {                                     // If the IR DetectorLevel is inactive for more than 4 x 2000 useconds (8 msec) then end of the bit stream is reached: 
           timedOut = true; 
 //          Serial.print(MSG06);
 //          Serial.print(SignalNumber);
-//         break;                                   // timed out, get out of the loop: while(digitalRead(IRdetectPin) == HIGH)
+//         break;                                                 // timed out, get out of the loop: while(digitalRead(IRdetectPin) == HIGH)
         }
       }
-      time = (TCNT1 - time)*4;                   // Analyse the code as transmitted by Samsung - like remote
-        if (time >= 450 && time <= 650) IRcode += 'S';           // S = SHORT signal, move 'S' into the code variable
+      time = (TCNT1 - time)*4;                                    // Analyse the code as transmitted by Samsung - like remote
+        if (time >= 450 && time <= 650) IRcode += 'S';            // S = SHORT signal, move 'S' into the code variable
         else { 
            if (time >= 1450 && time <= 1800)  IRcode += 'L';      // L = LONG signal, move 'L' into the code variable
-            else IRcode += 'X'; // no valid signal
+            else IRcode += 'X';                                   // no valid signal
          }
       SignalNumber++;
-      DetectorLevel = 'L';                   // IR detector went LOW, so a PAUSE period now starts
+      DetectorLevel = 'L';                                        // IR detector went LOW, so a PAUSE period now starts
     }
   }
 }
@@ -235,7 +237,7 @@ void DecodeIR() {                                                               
        }
      }
    }
-   switch (decoded_signal) {    // first construct the IRcode to send out
+   switch (decoded_signal) {                                                                   // first construct the IRcode to send out
      case 0:
        IRcode = "";
        break;
@@ -257,20 +259,13 @@ void DecodeIR() {                                                               
      case 6:
        IRcode = "G" + common + SAT + "CG" + common + SAT + "C";        
    }
-   
-   if (digitalRead(PrintModePin) == LOW) {
-     Serial.print("IRcode = ");
-     Serial.println(IRcode);
-     Serial.print("Length IRcode = ");
-     Serial.println(IRcode.length());
-   }
 }
 
 
 
 void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=45499.0  
 
-   digitalWrite(LEDpin, HIGH);                        // turn on the indicator LED 
+   digitalWrite(LEDpin, HIGH);                                     // turn on the indicator LED 
    timeout = IRcode.length();
 
    for (int j = 0 ; j < timeout ; j++) {
@@ -285,20 +280,17 @@ void SendIR() {             // see : http://forum.arduino.cc/index.php?topic=454
            }
          }
        }
-       
-// Connect pin to signal, this turns on the IR LED (in a PWM mode, see value OCR2A)
-       TCCR2A |=  _BV(COM2A0);         // Fast PWM Mode, see: http://arduino.cc/en/Tutorial/SecretsOfArduinoPWM
-// Duration depends of separating code-bit, only in case of GO, it needs to be INIT long, otherwise use PAUSE (see Pioneer IR code)
-       if (time == GO) delayMicroseconds(INIT);
+                                                                 // Connect pin to signal, this turns on the IR LED (in a PWM mode, see value OCR2A)
+       TCCR2A |=  _BV(COM2A0);                                   // Fast PWM Mode, see: http://arduino.cc/en/Tutorial/SecretsOfArduinoPWM
+       if (time == GO) delayMicroseconds(INIT);                  // Duration depends of separating code-bit, only in case of GO, it needs to be INIT long, otherwise use PAUSE (see Pioneer IR code)
        else delayMicroseconds(PAUSE);
-       
-       TCCR2A &= (0xFF - _BV(COM2A0)); // disconnect pin from signal
-       delayMicroseconds(time);        // duration of the coding bit
-       if (digitalRead(PrintModePin) == LOW) {
-         Serial.print(time);
-         Serial.print(" ");
-       }
+       TCCR2A &= (0xFF - _BV(COM2A0));                           // disconnect pin from signal
+       delayMicroseconds(time);                                  // duration of the coding bit
+//       if (digitalRead(PrintModePin) == LOW) {
+//         Serial.print(time);
+//         Serial.print(" ");
+//       }
    }
-   digitalWrite(IRsendPin,LOW);              // turn pin low in case it's still high
-   digitalWrite(LEDpin, LOW);                // turn off indicator LED
+   digitalWrite(IRsendPin,LOW);                                  // turn pin low in case it's still high
+   digitalWrite(LEDpin, LOW);                                    // turn off indicator LED
 }
